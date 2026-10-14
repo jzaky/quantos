@@ -8,6 +8,8 @@ test_retry_reconciles_before_resubmitting (test_safety_regressions.Idempotency.t
 An uncertain outcome is looked up at the broker before any retry is sent. ... FAIL
 test_automation_blocked_by_kill_switch (test_safety_regressions.KillSwitch.test_automation_blocked_by_kill_switch)
 Defect Q2: automation called the governor with kill_switch=False and never checked the switch. ... FAIL
+test_kill_switch_authorization (test_safety_regressions.KillSwitch.test_kill_switch_authorization)
+Defect Q4 (authorization). The platform switch halts every workspace, so a workspace key may not ... FAIL
 test_kill_switch_changes_require_authentication (test_safety_regressions.KillSwitch.test_kill_switch_changes_require_authentication)
 Defect Q4: anyone who could reach the API could turn the kill switch off. ... FAIL
 test_kill_switch_persists_across_restart (test_safety_regressions.KillSwitch.test_kill_switch_persists_across_restart)
@@ -18,8 +20,6 @@ test_manual_broker_order_blocked_by_workspace_kill_switch (test_safety_regressio
 Defect Q1 and Q3: there was no per-workspace kill switch for broker orders. ... FAIL
 test_simulator_honours_persisted_kill_switch (test_safety_regressions.KillSwitch.test_simulator_honours_persisted_kill_switch)
 Defect Q3 (simulator path): after a restart the simulated engine traded again. ... FAIL
-test_workspace_users_can_engage_but_only_platform_admin_releases (test_safety_regressions.KillSwitch.test_workspace_users_can_engage_but_only_platform_admin_releases)
-Defect Q4 (authorization): engaging is safety-positive; releasing needs the platform admin token. ... FAIL
 test_automation_rejected_when_account_unavailable (test_safety_regressions.RiskGovernor.test_automation_rejected_when_account_unavailable)
 Preserved behaviour: automation already stopped when the broker account could not be read. ... ok
 test_automation_uses_live_drawdown (test_safety_regressions.RiskGovernor.test_automation_uses_live_drawdown)
@@ -39,7 +39,7 @@ ERROR: test_manual_and_automated_orders_use_the_same_safety_checks (test_safety_
 All execution paths go through one order-safety function.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 195, in test_manual_and_automated_orders_use_the_same_safety_checks
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 212, in test_manual_and_automated_orders_use_the_same_safety_checks
     safety = importlib.import_module("quantos.order_safety")
   File "/usr/lib/python3.13/importlib/__init__.py", line 88, in import_module
     return _bootstrap._gcd_import(name[level:], package, level)
@@ -54,27 +54,27 @@ FAIL: test_automation_retry_after_broker_timeout_does_not_duplicate (test_safety
 Defect Q5 (automation): a random client_order_id per attempt meant a retry after a lost
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 188, in test_automation_retry_after_broker_timeout_does_not_duplicate
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 205, in test_automation_retry_after_broker_timeout_does_not_duplicate
     self.assertEqual(support.fakes.placed("dup-auto"), 1, support.fakes.book("dup-auto")["calls"])
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 2 != 1 : [('account',), ('positions',), ('submit', 'qos-auto-c6891a2c675047549cbf', 'NVDA', 'buy', 10.0, 'market', None), ('positions',), ('account',), ('positions',), ('submit', 'qos-auto-ab0a9fe29aea4b7fbd82', 'NVDA', 'buy', 10.0, 'market', None), ('positions',)]
+AssertionError: 2 != 1 : [('account',), ('positions',), ('submit', 'qos-auto-338d6e563c024bd3b993', 'NVDA', 'buy', 10.0, 'market', None), ('positions',), ('account',), ('positions',), ('submit', 'qos-auto-1da723947d6149fbaa97', 'NVDA', 'buy', 10.0, 'market', None), ('positions',)]
 
 ======================================================================
 FAIL: test_manual_retry_after_broker_timeout_does_not_duplicate (test_safety_regressions.Idempotency.test_manual_retry_after_broker_timeout_does_not_duplicate)
 Defect Q5 (manual): the idempotency record was written only after success, so a retry after a
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 166, in test_manual_retry_after_broker_timeout_does_not_duplicate
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 183, in test_manual_retry_after_broker_timeout_does_not_duplicate
     self.assertEqual(support.fakes.placed("dup-manual"), 1, support.fakes.book("dup-manual")["calls"])
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 2 != 1 : [('submit', 'qos-fc33c0e12d26494086442133', 'NVDA', 'buy', 10.0, 'market', None), ('submit', 'qos-bae90d988cde4ff2b20081fe', 'NVDA', 'buy', 10.0, 'market', None)]
+AssertionError: 2 != 1 : [('submit', 'qos-1084fcfd2ce04d7196b600a6', 'NVDA', 'buy', 10.0, 'market', None), ('submit', 'qos-611e41bf49124fc985d54196', 'NVDA', 'buy', 10.0, 'market', None)]
 
 ======================================================================
 FAIL: test_retry_reconciles_before_resubmitting (test_safety_regressions.Idempotency.test_retry_reconciles_before_resubmitting)
 An uncertain outcome is looked up at the broker before any retry is sent.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 176, in test_retry_reconciles_before_resubmitting
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 193, in test_retry_reconciles_before_resubmitting
     self.assertIn("lookup", calls)
     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
 AssertionError: 'lookup' not found in ['submit', 'submit']
@@ -84,18 +84,18 @@ FAIL: test_automation_blocked_by_kill_switch (test_safety_regressions.KillSwitch
 Defect Q2: automation called the governor with kill_switch=False and never checked the switch.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 93, in test_automation_blocked_by_kill_switch
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 103, in test_automation_blocked_by_kill_switch
     self.assertEqual(support.fakes.submits("auto-kill"), [])
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: Lists differ: [('submit', 'qos-auto-177d242196b6420e97cd[35 chars]one)] != []
+AssertionError: Lists differ: [('submit', 'qos-auto-38c44773077842e1b40a[35 chars]one)] != []
 
 First list contains 1 additional elements.
 First extra element 0:
-('submit', 'qos-auto-177d242196b6420e97cd', 'NVDA', 'buy', 10.0, 'market', None)
+('submit', 'qos-auto-38c44773077842e1b40a', 'NVDA', 'buy', 10.0, 'market', None)
 
 + []
 - [('submit',
--   'qos-auto-177d242196b6420e97cd',
+-   'qos-auto-38c44773077842e1b40a',
 -   'NVDA',
 -   'buy',
 -   10.0,
@@ -103,11 +103,21 @@ First extra element 0:
 -   None)]
 
 ======================================================================
+FAIL: test_kill_switch_authorization (test_safety_regressions.KillSwitch.test_kill_switch_authorization)
+Defect Q4 (authorization). The platform switch halts every workspace, so a workspace key may not
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 67, in test_kill_switch_authorization
+    self.assertEqual(platform.status_code, 403, platform.text)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 200 != 403 : {"enabled":true,"riskState":"HALTED"}
+
+======================================================================
 FAIL: test_kill_switch_changes_require_authentication (test_safety_regressions.KillSwitch.test_kill_switch_changes_require_authentication)
 Defect Q4: anyone who could reach the API could turn the kill switch off.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 53, in test_kill_switch_changes_require_authentication
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 53, in test_kill_switch_changes_require_authentication
     self.assertEqual(self.c.post("/api/risk/kill-switch", json={"enabled": True}).status_code, 401)
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AssertionError: 200 != 401
@@ -117,7 +127,7 @@ FAIL: test_kill_switch_persists_across_restart (test_safety_regressions.KillSwit
 Defect Q3: the kill switch lived only in process memory and reset to off on restart.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 45, in test_kill_switch_persists_across_restart
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 45, in test_kill_switch_persists_across_restart
     self.assertEqual(snap["riskState"], "HALTED")
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AssertionError: 'SAFE' != 'HALTED'
@@ -130,17 +140,17 @@ FAIL: test_manual_broker_order_blocked_by_platform_kill_switch (test_safety_regr
 Defect Q1: the broker order route never checked the kill switch.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 75, in test_manual_broker_order_blocked_by_platform_kill_switch
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 85, in test_manual_broker_order_blocked_by_platform_kill_switch
     self.assertEqual(r.status_code, 409, r.text)
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 200 != 409 : {"local_order_id":"ord_79498f0e493144b0aa8d","order":{"broker":"fake_paper","broker_order_id":"a9e4e2ad-a117-4e8b-9085-a554aae9ef3a","client_order_id":"qos-452200885f9b434cb064cd48","symbol":"NVDA","side":"buy","quantity":10.0,"order_type":"market","status":"filled","filled_quantity":10.0,"filled_avg_price":100.0,"submitted_at":"1792006712.9142134","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_e2393175afce41f9bcf0"}
+AssertionError: 200 != 409 : {"local_order_id":"ord_0a502bc3f40c473f81f0","order":{"broker":"fake_paper","broker_order_id":"aa41e995-f62f-4565-8515-e3d9893599e2","client_order_id":"qos-a6e9fc56f3c84db0b079b498","symbol":"NVDA","side":"buy","quantity":10.0,"order_type":"market","status":"filled","filled_quantity":10.0,"filled_avg_price":100.0,"submitted_at":"1792007056.0726805","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_f1d569baf8d7470d928a"}
 
 ======================================================================
 FAIL: test_manual_broker_order_blocked_by_workspace_kill_switch (test_safety_regressions.KillSwitch.test_manual_broker_order_blocked_by_workspace_kill_switch)
 Defect Q1 and Q3: there was no per-workspace kill switch for broker orders.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 82, in test_manual_broker_order_blocked_by_workspace_kill_switch
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 92, in test_manual_broker_order_blocked_by_workspace_kill_switch
     self.assertEqual(r.status_code, 200, r.text)
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AssertionError: 404 != 200 : {"detail":"Not Found"}
@@ -150,27 +160,17 @@ FAIL: test_simulator_honours_persisted_kill_switch (test_safety_regressions.Kill
 Defect Q3 (simulator path): after a restart the simulated engine traded again.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 100, in test_simulator_honours_persisted_kill_switch
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 110, in test_simulator_honours_persisted_kill_switch
     self.assertEqual(r.status_code, 409, r.text)
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 200 != 409 : {"accepted":true,"mode":"PAPER","orderId":1,"symbol":"NVDA","side":"BUY","requestedQuantity":1.0,"routedQuantity":1.0,"fillPrice":100.017087,"shadowPrice":100.0,"slippageBps":1.709,"position":{"symbol":"NVDA","strategy_id":"vector-momentum","qty":1.0,"avg_price":100.01708724202956,"realized_pnl":0.0},"risk":{"approved":true,"reason":"Smart risk envelope passed","resized_quantity":1.0,"policy_checks":{"kill_switch_clear":true,"strategy_active":true,"confidence_floor":true,"risk_budget":true,"gross_exposure":true,"drawdown_limit":true,"market_data_fresh":true,"regime_fit":true,"edge_after_costs":true,"correlation_limit":true,"strategy_health":true},"size_factor":1.0}}
-
-======================================================================
-FAIL: test_workspace_users_can_engage_but_only_platform_admin_releases (test_safety_regressions.KillSwitch.test_workspace_users_can_engage_but_only_platform_admin_releases)
-Defect Q4 (authorization): engaging is safety-positive; releasing needs the platform admin token.
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 66, in test_workspace_users_can_engage_but_only_platform_admin_releases
-    self.assertEqual(release.status_code, 403, release.text)
-    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 200 != 403 : {"enabled":false,"riskState":"SAFE"}
+AssertionError: 200 != 409 : {"accepted":true,"mode":"PAPER","orderId":1,"symbol":"NVDA","side":"BUY","requestedQuantity":1.0,"routedQuantity":1.0,"fillPrice":100.011019,"shadowPrice":100.0,"slippageBps":1.102,"position":{"symbol":"NVDA","strategy_id":"vector-momentum","qty":1.0,"avg_price":100.01101936911674,"realized_pnl":0.0},"risk":{"approved":true,"reason":"Smart risk envelope passed","resized_quantity":1.0,"policy_checks":{"kill_switch_clear":true,"strategy_active":true,"confidence_floor":true,"risk_budget":true,"gross_exposure":true,"drawdown_limit":true,"market_data_fresh":true,"regime_fit":true,"edge_after_costs":true,"correlation_limit":true,"strategy_health":true},"size_factor":1.0}}
 
 ======================================================================
 FAIL: test_automation_uses_live_drawdown (test_safety_regressions.RiskGovernor.test_automation_uses_live_drawdown)
 Defect Q2: automation passed drawdown=0.0 regardless of the account's real drawdown.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 122, in test_automation_uses_live_drawdown
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 137, in test_automation_uses_live_drawdown
     self.assertEqual(len(support.fakes.submits("drawdown")), before, "an order was placed while drawdown exceeded the limit")
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AssertionError: 2 != 1 : an order was placed while drawdown exceeded the limit
@@ -180,41 +180,41 @@ FAIL: test_manual_market_order_rejected_on_stale_price (test_safety_regressions.
 A market order must not be sized or checked against a stale or synthetic price.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 144, in test_manual_market_order_rejected_on_stale_price
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 161, in test_manual_market_order_rejected_on_stale_price
     self.assertIn(r.status_code, (409, 503), r.text)
     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 200 not found in (409, 503) : {"local_order_id":"ord_16fe80fc0e2947a2a2a3","order":{"broker":"fake_paper","broker_order_id":"34b3e772-6f59-46b9-8d79-35c908f637af","client_order_id":"qos-2158e68dba9f4b839f49e9e3","symbol":"NVDA","side":"buy","quantity":10.0,"order_type":"market","status":"filled","filled_quantity":10.0,"filled_avg_price":100.0,"submitted_at":"1792006713.6290464","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_e4c078f120964c93a2e2"}
+AssertionError: 200 not found in (409, 503) : {"local_order_id":"ord_f479d9b24a27496f947b","order":{"broker":"fake_paper","broker_order_id":"e6f699f1-3811-4cab-b093-1fd0403125f6","client_order_id":"qos-65d069cee6ce4bcf9e9733c7","symbol":"NVDA","side":"buy","quantity":10.0,"order_type":"market","status":"filled","filled_quantity":10.0,"filled_avg_price":100.0,"submitted_at":"1792007056.6155303","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_33189fa1859d463bb121"}
 
 ======================================================================
 FAIL: test_manual_order_enforces_risk_governor (test_safety_regressions.RiskGovernor.test_manual_order_enforces_risk_governor)
 Defect Q1: manual broker orders skipped the risk governor (here, symbol exposure above 12% of equity).
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 108, in test_manual_order_enforces_risk_governor
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 118, in test_manual_order_enforces_risk_governor
     self.assertEqual(r.status_code, 409, r.text)
     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 200 != 409 : {"local_order_id":"ord_7c9f71cdc3514bd1b256","order":{"broker":"fake_paper","broker_order_id":"1a586628-3917-4db6-9e0b-d29419663938","client_order_id":"qos-d8d35ff79438475595e82e3f","symbol":"NVDA","side":"buy","quantity":200.0,"order_type":"market","status":"filled","filled_quantity":200.0,"filled_avg_price":100.0,"submitted_at":"1792006713.7261736","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_c9b05b784db64bab8d48"}
+AssertionError: 200 != 409 : {"local_order_id":"ord_346116327b3e4e8e81d5","order":{"broker":"fake_paper","broker_order_id":"d658b569-a93a-4c0e-a32d-251cbf64c045","client_order_id":"qos-aa82bda8c7e54c30998f47d4","symbol":"NVDA","side":"buy","quantity":200.0,"order_type":"market","status":"filled","filled_quantity":200.0,"filled_avg_price":100.0,"submitted_at":"1792007056.7379827","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_4da6fa4cadfa4cf2a219"}
 
 ======================================================================
 FAIL: test_manual_order_rejected_when_account_unavailable (test_safety_regressions.RiskGovernor.test_manual_order_rejected_when_account_unavailable)
 Required risk information unavailable: the order must be rejected, not sent.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 129, in test_manual_order_rejected_when_account_unavailable
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 146, in test_manual_order_rejected_when_account_unavailable
     self.assertIn(r.status_code, (409, 503), r.text)
     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 200 not found in (409, 503) : {"local_order_id":"ord_057f80479b164cb285c6","order":{"broker":"fake_paper","broker_order_id":"838ebfda-6111-461d-9cd0-9685bb36567c","client_order_id":"qos-21567ccf70ec4508a9c8e622","symbol":"NVDA","side":"buy","quantity":10.0,"order_type":"market","status":"filled","filled_quantity":10.0,"filled_avg_price":100.0,"submitted_at":"1792006713.8290813","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_a7741d6995064ba8b292"}
+AssertionError: 200 not found in (409, 503) : {"local_order_id":"ord_b7340c98ff9040909394","order":{"broker":"fake_paper","broker_order_id":"92c061bc-1e49-4deb-87f0-dfe8c8d79fdb","client_order_id":"qos-196cbb9d5d254d14ab422304","symbol":"NVDA","side":"buy","quantity":10.0,"order_type":"market","status":"filled","filled_quantity":10.0,"filled_avg_price":100.0,"submitted_at":"1792007056.841897","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_108f9a6ba35c4d549cb6"}
 
 ======================================================================
 FAIL: test_manual_order_rejected_when_positions_unavailable (test_safety_regressions.RiskGovernor.test_manual_order_rejected_when_positions_unavailable)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/user/quantos/tests/test_safety_regressions.py", line 136, in test_manual_order_rejected_when_positions_unavailable
+  File "/tmp/claude-0/qos-base/tests/test_safety_regressions.py", line 153, in test_manual_order_rejected_when_positions_unavailable
     self.assertIn(r.status_code, (409, 503), r.text)
     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: 200 not found in (409, 503) : {"local_order_id":"ord_50a26bbf82e74d86ae41","order":{"broker":"fake_paper","broker_order_id":"7ad3c37e-9ad9-43a9-8474-77894d654ac1","client_order_id":"qos-5b926c08c2c547a4b63fe4d9","symbol":"NVDA","side":"buy","quantity":10.0,"order_type":"market","status":"filled","filled_quantity":10.0,"filled_avg_price":100.0,"submitted_at":"1792006713.9311693","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_a9077bcd4f9c4d72be8d"}
+AssertionError: 200 not found in (409, 503) : {"local_order_id":"ord_2cfad7fc0b4b454aba3a","order":{"broker":"fake_paper","broker_order_id":"f2f028de-38be-4f5d-9537-811e8404ed7f","client_order_id":"qos-4b6d9b75c1644f0187def6a3","symbol":"NVDA","side":"buy","quantity":10.0,"order_type":"market","status":"filled","filled_quantity":10.0,"filled_avg_price":100.0,"submitted_at":"1792007056.9702892","raw":{"limit_price":null,"stop_price":null,"time_in_force":"day"}},"paper":true,"request_id":"req_ed47f0afcb2e45b8bb04"}
 
 ----------------------------------------------------------------------
-Ran 17 tests in 2.380s
+Ran 17 tests in 2.248s
 
 FAILED (failures=15, errors=1)

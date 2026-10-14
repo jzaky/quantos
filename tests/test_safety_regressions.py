@@ -57,15 +57,25 @@ class KillSwitch(Base):
         self.assertEqual(bad.status_code, 401)
         self.assertEqual(self.c.get("/api/snapshot").json()["riskState"], "HALTED")
 
-    def test_workspace_users_can_engage_but_only_platform_admin_releases(self):
-        """Defect Q4 (authorization): engaging is safety-positive; releasing needs the platform admin token."""
-        ws, key, conn = support.workspace(self.q, "authz")
-        engage = self.c.post("/api/risk/kill-switch", headers={"X-QOS-API-Key": key}, json={"enabled": True})
+    def test_kill_switch_authorization(self):
+        """Defect Q4 (authorization). The platform switch halts every workspace, so a workspace key may not
+        change it. A workspace trader may engage its own workspace switch (safety-positive) but only a
+        workspace admin may release it."""
+        ws, admin_key, conn = support.workspace(self.q, "authz")
+        _, trader_key = self.q.tenant_store.issue_api_key(ws, "trader key", "trader")
+        platform = self.c.post("/api/risk/kill-switch", headers={"X-QOS-API-Key": admin_key}, json={"enabled": True})
+        self.assertEqual(platform.status_code, 403, platform.text)
+        engage = self.c.post("/api/v1/kill-switch", headers={"X-QOS-API-Key": trader_key}, json={"enabled": True})
         self.assertEqual(engage.status_code, 200, engage.text)
-        release = self.c.post("/api/risk/kill-switch", headers={"X-QOS-API-Key": key}, json={"enabled": False})
+        release = self.c.post("/api/v1/kill-switch", headers={"X-QOS-API-Key": trader_key}, json={"enabled": False})
         self.assertEqual(release.status_code, 403, release.text)
-        ok = self.c.post("/api/risk/kill-switch", headers=ADMIN, json={"enabled": False})
+        self.assertEqual(self.order(admin_key, conn, "still-halted").status_code, 409)
+        ok = self.c.post("/api/v1/kill-switch", headers={"X-QOS-API-Key": admin_key}, json={"enabled": False})
         self.assertEqual(ok.status_code, 200, ok.text)
+        self.engage_platform()
+        released = self.c.post("/api/risk/kill-switch", headers=ADMIN, json={"enabled": False})
+        self.assertEqual(released.status_code, 200, released.text)
+        self.assertEqual(support.fakes.submits("authz"), [])
 
     def test_manual_broker_order_blocked_by_platform_kill_switch(self):
         """Defect Q1: the broker order route never checked the kill switch."""
@@ -116,10 +126,17 @@ class RiskGovernor(Base):
         self.q.saas_engine.cycle_workspace(support.automation_config(ws, conn, cooldown_seconds=60))
         before = len(support.fakes.submits("drawdown"))
         # The account loses 5% (governor limit is 3%).
-        support.fakes.book("drawdown")["cash"] -= 5_000 + 0.0
-        self.q.tenant_store.connect().execute("DELETE FROM automation_state").connection.commit()
+        self.assertEqual(before, 1, "the first cycle should trade; otherwise this test proves nothing")
+        support.fakes.book("drawdown")["cash"] -= 5_000
+        db = self.q.tenant_store.connect()
+        db.execute("DELETE FROM automation_state")
+        db.commit()
+        db.close()
+        support.advance_bar()  # a new signal bar, so the order is not suppressed as a duplicate
         self.q.saas_engine.cycle_workspace(support.automation_config(ws, conn, cooldown_seconds=60))
         self.assertEqual(len(support.fakes.submits("drawdown")), before, "an order was placed while drawdown exceeded the limit")
+        reasons = " ".join(str(e["payload"]) for e in self.q.tenant_store.list_events(ws, 50))
+        self.assertIn("drawdown_limit", reasons)
 
     def test_manual_order_rejected_when_account_unavailable(self):
         """Required risk information unavailable: the order must be rejected, not sent."""

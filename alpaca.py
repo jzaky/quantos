@@ -1,10 +1,11 @@
 from __future__ import annotations
 import json
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
-from .base import BrokerAdapter, BrokerAccount, BrokerOrder, BrokerPosition, SubmitOrder
+from .base import BrokerAdapter, BrokerAccount, BrokerOrder, BrokerOutcomeUnknown, BrokerPosition, BrokerRejected, BrokerUnavailable, SubmitOrder
 
 class AlpacaPaperAdapter(BrokerAdapter):
     slug = 'alpaca_paper'
@@ -18,7 +19,7 @@ class AlpacaPaperAdapter(BrokerAdapter):
             raise ValueError('AlpacaPaperAdapter is locked to the official paper endpoint')
         self.timeout = float(self.config.get('timeout', 8))
 
-    def _request(self, method: str, path: str, payload: dict | None = None) -> Any:
+    def _request(self, method: str, path: str, payload: dict | None = None, not_found_ok: bool = False) -> Any:
         url = self.base_url + path
         body = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(url, data=body, method=method)
@@ -30,10 +31,21 @@ class AlpacaPaperAdapter(BrokerAdapter):
                 raw = r.read().decode()
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as e:
-            detail = e.read().decode(errors='replace')
-            raise RuntimeError(f'Alpaca HTTP {e.code}: {detail[:500]}') from e
+            detail = e.read().decode(errors='replace')[:500]
+            if e.code == 404 and not_found_ok:
+                return None
+            # 4xx: Alpaca answered and refused (bad request, duplicate client_order_id, buying power).
+            # 408 and 429 are not refusals of the order itself, and 5xx can follow partial processing,
+            # so those are treated as unknown outcomes that must be reconciled.
+            if 400 <= e.code < 500 and e.code not in (408, 429):
+                raise BrokerRejected(f'Alpaca HTTP {e.code}: {detail}') from e
+            raise BrokerOutcomeUnknown(f'Alpaca HTTP {e.code}: {detail}') from e
         except urllib.error.URLError as e:
-            raise RuntimeError(f'Alpaca connection failed: {e.reason}') from e
+            if isinstance(e.reason, (TimeoutError, socket.timeout)):
+                raise BrokerOutcomeUnknown(f'Alpaca request timed out: {e.reason}') from e
+            raise BrokerUnavailable(f'Alpaca connection failed: {e.reason}') from e
+        except (TimeoutError, socket.timeout, ConnectionError) as e:
+            raise BrokerOutcomeUnknown(f'Alpaca request interrupted: {e}') from e
 
     @staticmethod
     def _f(value: Any, default: float = 0.0) -> float:
@@ -70,6 +82,11 @@ class AlpacaPaperAdapter(BrokerAdapter):
     def get_order(self, broker_order_id: str) -> BrokerOrder:
         d = self._request('GET', f'/v2/orders/{urllib.parse.quote(broker_order_id)}')
         return self._normalize_order(d)
+
+    def get_order_by_client_order_id(self, client_order_id: str) -> BrokerOrder | None:
+        q = urllib.parse.urlencode({'client_order_id': client_order_id})
+        d = self._request('GET', f'/v2/orders:by_client_order_id?{q}', not_found_ok=True)
+        return self._normalize_order(d) if d else None
 
     def list_positions(self) -> list[BrokerPosition]:
         rows = self._request('GET', '/v2/positions') or []

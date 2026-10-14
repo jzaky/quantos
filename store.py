@@ -3,7 +3,8 @@ import json, sqlite3, threading, time
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).resolve().parent.parent / 'data' / 'quant_os.db'
+import os as _os
+DB_PATH = Path(_os.getenv('QOS_DATA_DIR') or Path(__file__).resolve().parent.parent / 'data') / 'quant_os.db'
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 _lock = threading.Lock()
 

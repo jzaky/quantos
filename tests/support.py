@@ -64,6 +64,11 @@ os.environ["QOS_SECRET_FAKE_API_KEY"] = "fake-key"
 os.environ["QOS_SECRET_FAKE_API_SECRET"] = "fake-secret"
 
 QUOTES: dict[str, dict] = {}  # symbol -> {"price": float, "stale": bool, "age": float}
+BARS = {"offset": 0}  # whole 5-minute bars added to the clock, so a test can move to the next signal bar
+
+
+def advance_bar(n: int = 1) -> None:
+    BARS["offset"] += n
 
 
 def set_quote(symbol: str, price: float = 100.0, stale: bool = False, age: float = 0.0) -> None:
@@ -100,8 +105,8 @@ def load(data_dir: str) -> SimpleNamespace:
 
     def fake_history(self, symbol, period="3mo", interval="1d"):
         price = QUOTES.get(symbol.upper(), {"price": 100.0})["price"]
-        now = time.time()
-        return [{"ts": now - (60 - i) * 300, "open": price, "high": price, "low": price, "close": price, "volume": 1000} for i in range(60)]
+        last = (int(time.time()) // 300 + BARS["offset"]) * 300  # bar timestamps are stable within a bar, like real data
+        return [{"ts": last - (59 - i) * 300, "open": price, "high": price, "low": price, "close": price, "volume": 1000} for i in range(60)]
 
     market_data.MarketDataHub.quote = fake_quote
     market_data.MarketDataHub.history = fake_history
@@ -123,6 +128,8 @@ def load(data_dir: str) -> SimpleNamespace:
     tracking.init_tracking()
     tenant_store.ensure_automation_schema()
     tenant_store.migrate_production_schema()
+    if hasattr(main, "order_safety"):
+        main.order_safety.init_schema()
     main.state["engineRunning"] = False
 
     from fastapi.testclient import TestClient

@@ -505,12 +505,12 @@ function BrokerCloud() {
   </motion.div>;
 }
 
-function RiskView({ killSwitch, setKillSwitch }: { killSwitch: boolean; setKillSwitch: (v: boolean) => void }) {
+function RiskView({ killSwitch, setKillSwitch, error }: { killSwitch: boolean; setKillSwitch: (v: boolean) => void; error?: string }) {
   const rules = [
     ["Daily loss limit", "$3,500", "$642", 18], ["Gross exposure", "75%", "48%", 64], ["Single strategy", "22%", "18%", 82], ["Single name", "12%", "7.4%", 62], ["Correlation cluster", "0.70", "0.34", 49], ["Slippage deviation", "2.0σ", "0.18σ", 9],
   ];
   return <motion.div className="view-grid" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-    <section className={`glass span-12 master-risk ${killSwitch ? "tripped" : ""}`}><div className="master-risk-copy"><div className="eyebrow">MASTER SYSTEM CONTROL</div><h2>{killSwitch ? "TRADING HALTED" : "Risk governor armed"}</h2><p>{killSwitch ? "All new order generation and routing are blocked. Position monitoring remains online." : "Independent hard limits are active. No agent or strategy can bypass the governor."}</p></div><button className={`kill-button ${killSwitch ? "restore" : ""}`} onClick={() => setKillSwitch(!killSwitch)}>{killSwitch ? <Play size={18}/> : <ShieldAlert size={18}/>}<span>{killSwitch ? "RESTORE PAPER ROUTER" : "MASTER KILL SWITCH"}</span></button></section>
+    <section className={`glass span-12 master-risk ${killSwitch ? "tripped" : ""}`}><div className="master-risk-copy"><div className="eyebrow">MASTER SYSTEM CONTROL</div><h2>{killSwitch ? "TRADING HALTED" : "Risk governor armed"}</h2><p>{killSwitch ? "All new order generation and routing are blocked. Position monitoring remains online." : "Independent hard limits are active. No agent or strategy can bypass the governor."}</p></div><button className={`kill-button ${killSwitch ? "restore" : ""}`} onClick={() => setKillSwitch(!killSwitch)}>{killSwitch ? <Play size={18}/> : <ShieldAlert size={18}/>}<span>{killSwitch ? "RESTORE PAPER ROUTER" : "MASTER KILL SWITCH"}</span></button>{error && <p className="kill-error" role="alert">{error}</p>}</section>
     <section className="glass span-8"><div className="panel-title-row compact"><div><div className="eyebrow">POLICY MATRIX</div><h3>Hard risk envelopes</h3></div><LockKeyhole size={17}/></div><div className="policy-grid">{rules.map(([name, limit, current, usage]) => <div className="policy-row" key={name as string}><div><b>{name}</b><span>limit {limit}</span></div><strong>{current}</strong><div className="policy-bar"><motion.i initial={{ width: 0 }} animate={{ width: `${usage}%` }} /></div><span className="policy-pass"><ShieldCheck size={13}/> PASS</span></div>)}</div></section>
     <section className="glass span-4"><div className="panel-title-row compact"><div><div className="eyebrow">CIRCUIT BREAKERS</div><h3>Automatic defense</h3></div><TriangleAlert size={17}/></div><div className="breaker-list"><span><i className="breaker-dot safe"/>Stale market data<b>ARMED</b></span><span><i className="breaker-dot safe"/>Broker disconnect<b>ARMED</b></span><span><i className="breaker-dot safe"/>Abnormal slippage<b>ARMED</b></span><span><i className="breaker-dot safe"/>Drawdown spike<b>ARMED</b></span><span><i className="breaker-dot safe"/>Duplicate orders<b>ARMED</b></span><span><i className="breaker-dot safe"/>Volatility shock<b>ARMED</b></span></div></section>
     <section className="glass span-12"><div className="panel-title-row compact"><div><div className="eyebrow">RISK EVENT LOG</div><h3>Recent interventions</h3></div></div><div className="incident-grid"><div className="incident"><span className="incident-time">11:55:46</span><TriangleAlert size={16}/><div><b>AMD order blocked</b><small>Single-name exposure would exceed configured envelope.</small></div><strong>BLOCKED</strong></div><div className="incident"><span className="incident-time">10:41:18</span><ShieldCheck size={16}/><div><b>Vector Momentum resized</b><small>Volatility-adjusted size reduced by 14% before routing.</small></div><strong className="positive">RESIZED</strong></div></div></section>
@@ -596,10 +596,40 @@ export default function QuantOS() {
     { label: "Router latency", value: `${snapshot.latencyMs.toFixed(1)} ms`, delta: "+ healthy", icon: Zap },
   ], [snapshot]);
 
-  const setKillSwitchRemote = (v: boolean) => {
-    setKillSwitch(v);
-    const apiUrl = process.env.NEXT_PUBLIC_QUANT_API_URL?.trim() || ((typeof window !== "undefined" && window.location.hostname === "localhost") ? "http://localhost:8000" : "");
-    if (apiUrl) fetch(`${apiUrl}/api/risk/kill-switch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: v }) }).catch(() => {});
+  const [killSwitchError, setKillSwitchError] = useState("");
+  const quantApiUrl = () => process.env.NEXT_PUBLIC_QUANT_API_URL?.trim() || ((typeof window !== "undefined" && window.location.hostname === "localhost") ? "http://localhost:8000" : "");
+
+  // The server is the source of truth for the kill switch: show its persisted state, never an optimistic one.
+  useEffect(() => {
+    const apiUrl = quantApiUrl();
+    if (!apiUrl) return;
+    fetch(`${apiUrl}/api/risk/kill-switch`).then(r => r.ok ? r.json() : null).then(d => { if (d) setKillSwitch(Boolean(d.enabled)); }).catch(() => setKillSwitchError("Kill switch state unavailable"));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => { if (snapshot.riskState === "HALTED") setKillSwitch(true); }, [snapshot.riskState]);
+
+  const setKillSwitchRemote = async (v: boolean) => {
+    const apiUrl = quantApiUrl();
+    if (!apiUrl) { setKillSwitch(v); return; } // offline demo mode: no backend to halt
+    setKillSwitchError("");
+    let token = sessionStorage.getItem("qos_admin_token") || "";
+    if (!token) {
+      token = window.prompt("Operator token (X-QOS-Admin-Token) to change the platform kill switch") || "";
+      if (!token) return;
+      sessionStorage.setItem("qos_admin_token", token);
+    }
+    try {
+      const r = await fetch(`${apiUrl}/api/risk/kill-switch`, { method: "POST", headers: { "Content-Type": "application/json", "X-QOS-Admin-Token": token }, body: JSON.stringify({ enabled: v, reason: v ? "operator halt from console" : "operator release from console" }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (r.status === 401) sessionStorage.removeItem("qos_admin_token");
+        setKillSwitchError(typeof d?.detail === "string" ? d.detail : `Kill switch change refused (${r.status})`);
+        return;
+      }
+      setKillSwitch(Boolean(d.enabled));
+    } catch {
+      setKillSwitchError("Kill switch change failed: server unreachable. State unchanged.");
+    }
   };
 
   const renderView = () => {
@@ -610,7 +640,7 @@ export default function QuantOS() {
       case "agents": return <AgentMesh />;
       case "execution": return <Execution />;
       case "brokers": return <BrokerCloud />;
-      case "risk": return <RiskView killSwitch={killSwitch} setKillSwitch={setKillSwitchRemote} />;
+      case "risk": return <RiskView killSwitch={killSwitch} setKillSwitch={setKillSwitchRemote} error={killSwitchError} />;
       case "research": return <Research />;
       case "shadow": return <Shadow />;
       default: return <Overview snapshot={snapshot} strategies={strategies} />;
