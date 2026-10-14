@@ -172,10 +172,13 @@ CREATE TABLE IF NOT EXISTS order_intents (
   client_order_id TEXT NOT NULL UNIQUE, source TEXT NOT NULL, connection_id TEXT NOT NULL,
   params_json TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
   response_json TEXT, attempts INTEGER NOT NULL DEFAULT 0,
-  lease_owner TEXT, lease_until REAL, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+  lease_owner TEXT, lease_until REAL, aegis_json TEXT, ref_price REAL, created_at REAL NOT NULL, updated_at REAL NOT NULL,
   PRIMARY KEY(workspace_id, idem_key)
 );
 CREATE INDEX IF NOT EXISTS idx_order_intents_status ON order_intents(workspace_id, connection_id, status);
+CREATE TABLE IF NOT EXISTS account_locks (
+  lock_key TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS account_marks (
   workspace_id TEXT NOT NULL, connection_id TEXT NOT NULL, high_water REAL NOT NULL,
   updated_at REAL NOT NULL, PRIMARY KEY(workspace_id, connection_id)
@@ -206,6 +209,11 @@ def migrate_production_schema():
         ''')
         # Migration 5: order safety (persisted kill switches, order intents, account high-water marks).
         c.executescript(SAFETY_SCHEMA)
+        intent_cols={r['name'] for r in c.execute('PRAGMA table_info(order_intents)').fetchall()}
+        if 'aegis_json' not in intent_cols:
+            c.execute('ALTER TABLE order_intents ADD COLUMN aegis_json TEXT')
+        if 'ref_price' not in intent_cols:
+            c.execute('ALTER TABLE order_intents ADD COLUMN ref_price REAL')
         c.execute('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)',(4,time.time()))
         c.execute('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)',(5,time.time()))
         c.commit(); c.close()

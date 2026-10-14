@@ -13,8 +13,10 @@ Nothing else in Quant OS calls ``adapter.submit_order``. In order, ``submit_orde
    any of them is unavailable, stale or implausible;
 6. runs the risk governor on that live state (drawdown from a persisted high-water mark, post-trade
    gross and single-symbol exposure, and the model checks for automated orders);
-7. asks the optional external authorizer (AEGIS) and rechecks the kill switches;
-8. sends exactly the validated parameters to the broker and classifies the outcome.
+7. when AEGIS is configured (QOS_AEGIS_URL), asks it for a decision and a single-use grant, re-runs
+   steps 4 to 6 on fresh state, then has the grant verified and consumed for the exact parameters;
+8. rechecks the kill switches, sends exactly the checked parameters to the broker, classifies the
+   outcome and reports it to AEGIS.
 
 The quantity is never changed here. Sizing happens before the intent is created, so the parameters
 that are checked, authorized and sent are the same parameters.
@@ -26,6 +28,7 @@ import json
 import os
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
@@ -36,6 +39,9 @@ from .risk_engine import RiskGovernor
 
 PLATFORM = 'platform'
 LEASE_SECONDS = 60.0
+ACCOUNT_LOCK_SECONDS = 60.0
+ACCOUNT_LOCK_WAIT = float(os.getenv('QOS_ACCOUNT_LOCK_WAIT_SECONDS', '15'))
+OPEN_ORDER_STATUSES_DONE = ('filled', 'canceled', 'cancelled', 'rejected', 'expired', 'done_for_day', 'replaced')
 
 _hub = MarketDataHub()
 _governor = RiskGovernor()
@@ -264,6 +270,83 @@ def unresolved_intents(workspace_id: str, connection_id: str | None = None) -> l
         c.close()
 
 
+# ------------------------------------------------------------------ account lock
+
+@contextmanager
+def account_lock(workspace_id: str, connection_id: str, wait: float | None = None):
+    """Serializes check-then-send per broker account, across threads and processes sharing the
+    database. Without it, concurrent orders each pass the exposure limits against the same
+    positions and together exceed them."""
+    key = f'{workspace_id}|{connection_id}'
+    owner = uuid.uuid4().hex
+    deadline = time.time() + (ACCOUNT_LOCK_WAIT if wait is None else wait)
+    while True:
+        now = time.time()
+        with tenant_store._lock:
+            c = tenant_store.connect()
+            try:
+                c.execute('DELETE FROM account_locks WHERE lock_key=? AND expires_at<?', (key, now))
+                got = c.execute('INSERT OR IGNORE INTO account_locks(lock_key,owner,expires_at) VALUES(?,?,?)',
+                                (key, owner, now + ACCOUNT_LOCK_SECONDS)).rowcount == 1
+                c.commit()
+            finally:
+                c.close()
+        if got:
+            break
+        if now >= deadline:
+            raise OrderRejected(409, 'account_busy', 'Another order for this broker account is being checked and sent; retry with the same key')
+        time.sleep(0.02)
+    try:
+        yield
+    finally:
+        try:
+            with tenant_store._lock:
+                c = tenant_store.connect()
+                try:
+                    c.execute('DELETE FROM account_locks WHERE lock_key=? AND owner=?', (key, owner))
+                    c.commit()
+                finally:
+                    c.close()
+        except Exception:
+            pass  # expires after ACCOUNT_LOCK_SECONDS
+
+
+def pending_exposure(workspace_id: str, connection_id: str, symbol: str, exclude_idem: str) -> dict:
+    """Signed quantity and gross notional of this account's orders that may not be in the broker's
+    positions yet: in flight, unknown, or submitted but not filled or closed in the last 24 hours."""
+    c = tenant_store.connect()
+    try:
+        rows = c.execute('''SELECT idem_key, status, params_json, response_json, ref_price FROM order_intents WHERE workspace_id=? AND connection_id=?
+            AND status IN ('submitting','unknown','submitted') AND updated_at>?''', (workspace_id, connection_id, time.time() - 86400)).fetchall()
+    finally:
+        c.close()
+    sym_qty = 0.0
+    gross_qty: dict[str, float] = {}
+    notional_by_symbol: dict[str, float] = {}
+    for r in rows:
+        if r['idem_key'] == exclude_idem:
+            continue
+        if r['status'] == 'submitted':
+            try:
+                o = json.loads(r['response_json'] or '{}').get('order') or {}
+            except Exception:
+                o = {}
+            status = str(o.get('status', '')).lower()
+            if status in OPEN_ORDER_STATUSES_DONE:
+                continue
+            remaining = float(o.get('quantity') or 0) - float(o.get('filled_quantity') or 0)
+        else:
+            remaining = float(json.loads(r['params_json']).get('quantity') or 0)
+        p = json.loads(r['params_json'])
+        signed = remaining if p.get('side') == 'buy' else -remaining
+        s = p.get('symbol', '')
+        gross_qty[s] = gross_qty.get(s, 0.0) + abs(signed)
+        notional_by_symbol[s] = notional_by_symbol.get(s, 0.0) + abs(signed) * float(r['ref_price'] or 0.0)
+        if s == symbol.upper():
+            sym_qty += signed
+    return {'symbol_qty': sym_qty, 'qty_by_symbol': gross_qty, 'notional_by_symbol': notional_by_symbol}
+
+
 # ------------------------------------------------------------------ live risk state
 
 def observe_drawdown(workspace_id: str, connection_id: str, equity: float) -> float:
@@ -316,11 +399,13 @@ def fresh_quote(symbol: str, quote_fn: Callable | None = None):
     return q
 
 
-def exposure(positions, equity: float, symbol: str, signed_qty: float, price: float) -> dict:
-    """Current and post-trade gross and single-symbol exposure in percent of equity."""
+def exposure(positions, equity: float, symbol: str, signed_qty: float, price: float, pending: dict | None = None) -> dict:
+    """Current and post-trade gross and single-symbol exposure in percent of equity. ``pending``
+    adds orders that are not in the broker's positions yet (see pending_exposure)."""
     sym = symbol.upper()
-    gross = sum(abs(float(p.market_value)) for p in positions)
-    cur_qty = sum(float(p.quantity) for p in positions if p.symbol.upper() == sym)
+    pend = pending or {'symbol_qty': 0.0, 'notional_by_symbol': {}}
+    gross = sum(abs(float(p.market_value)) for p in positions) + sum(n for s, n in pend.get('notional_by_symbol', {}).items() if s != sym)
+    cur_qty = sum(float(p.quantity) for p in positions if p.symbol.upper() == sym) + pend['symbol_qty']
     cur_sym = abs(sum(float(p.market_value) for p in positions if p.symbol.upper() == sym))
     post_qty = cur_qty + signed_qty
     post_sym = abs(post_qty) * price
@@ -341,7 +426,8 @@ def evaluate(intent: OrderIntent, adapter, *, quote_fn: Callable | None = None, 
     if intent.limit_price and side == 'buy':
         ref_price = max(ref_price, float(intent.limit_price))
     signed = intent.quantity if side == 'buy' else -intent.quantity
-    ex = exposure(st['positions'], st['equity'], intent.symbol, signed, ref_price)
+    pend = pending_exposure(intent.workspace_id, intent.connection_id, intent.symbol, intent.idempotency_key)
+    ex = exposure(st['positions'], st['equity'], intent.symbol, signed, ref_price, pend)
     m = intent.model
     gov = governor or _governor
     decision = gov.evaluate(
@@ -419,8 +505,116 @@ def _record_submitted(intent, cid, owner, order, evidence, extra) -> dict:
     return res
 
 
+def _authorizer_from_env():
+    from . import aegis_client
+    return aegis_client.AegisClient.from_env() if aegis_client.enabled() else None
+
+
+def _authorizer_or_none():
+    try:
+        return _authorizer_from_env()
+    except OrderRejected:
+        return None
+
+
+def _aegis_report(authorizer, auth, intent, outcome: str, order=None, note: str = '') -> bool:
+    if not (authorizer and auth):
+        return False
+    summary = {'client_order_id': auth.params.get('reference'), 'source': intent.source}
+    if order is not None:
+        summary.update({'broker_status': order.status, 'filled_qty': order.filled_quantity, 'filled_avg_price': order.filled_avg_price})
+    if note:
+        summary['note'] = note
+    ok = authorizer.report(auth, outcome, order.broker_order_id if order is not None else None, summary)
+    _audit(intent, 'aegis_outcome_reported' if ok else 'aegis_report_failed', {'aegis_request_id': auth.request_id, 'outcome': outcome}, None)
+    return ok
+
+
+def _stored_auth(row: dict):
+    if not row.get('aegis_json'):
+        return None
+    from .aegis_client import Authorization
+    d = json.loads(row['aegis_json'])
+    return Authorization(**d)
+
+
+def _submit_leased(intent: OrderIntent, cid: str, owner: str, row: dict, adapter, connection: dict, quote_fn, governor, authorizer, actor) -> dict:
+    """submit_order after the idempotency lease and the account lock are held."""
+    row = _get_intent(intent.workspace_id, intent.idempotency_key) or row
+    if row['status'] == 'submitted':
+        return {**json.loads(row['response_json']), 'idempotent_replay': True}
+    if row['status'] in UNRESOLVED:
+        # An earlier attempt may have reached the broker. Find out before sending anything.
+        try:
+            found = adapter.get_order_by_client_order_id(cid)
+        except Exception as e:
+            _audit(intent, 'order_reconcile_failed', {'client_order_id': cid, 'error': type(e).__name__}, actor)
+            raise OrderRejected(503, 'reconciliation_pending',
+                                'The outcome of an earlier attempt is unknown and the broker cannot confirm it yet; nothing was sent')
+        prior_auth = _stored_auth(row)
+        prior_authorizer = authorizer or (_authorizer_or_none() if prior_auth else None)
+        if found is not None:
+            res = _record_submitted(intent, cid, owner, found, None, {'reconciled': True})
+            _audit(intent, 'order_reconciled', {'client_order_id': cid, 'broker_order_id': found.broker_order_id, 'found': True}, actor)
+            _aegis_report(prior_authorizer, prior_auth, intent, 'succeeded', found, 'reconciled after an unknown outcome')
+            return res
+        _audit(intent, 'order_reconciled', {'client_order_id': cid, 'found': False}, actor)
+        # The broker confirms the earlier attempt never arrived. Its AEGIS grant was consumed, so close
+        # that request as failed; a new attempt needs a new authorization (and AEGIS will refuse a
+        # second grant for the same request).
+        _aegis_report(prior_authorizer, prior_auth, intent, 'failed', None, 'not at broker after an unknown outcome')
+
+    auth = None
+    try:
+        evidence = evaluate(intent, adapter, quote_fn=quote_fn, governor=governor)  # Gate 1: Quant OS's own controls
+        if authorizer is None:
+            authorizer = _authorizer_from_env()
+        if authorizer is not None:
+            auth = authorizer.authorize(intent, cid, evidence)  # Gate 2: AEGIS decision and grant
+            evidence = evaluate(intent, adapter, quote_fn=quote_fn, governor=governor)  # own controls again, on fresh state
+            authorizer.verify(auth, intent, cid)  # consumes the grant for exactly these parameters
+            _update_intent(intent.workspace_id, intent.idempotency_key, owner, aegis_json=json.dumps(auth.__dict__))
+        require_clear(intent.workspace_id)  # recheck immediately before sending
+    except OrderRejected as e:
+        _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='blocked', detail=f'{e.code}: {e.message}'[:500])
+        _audit(intent, 'order_blocked', {'client_order_id': cid, 'code': e.code, 'reason': e.message, **intent.material()}, actor)
+        if auth is not None and auth.verified:
+            _aegis_report(authorizer, auth, intent, 'failed', None, f'blocked by Quant OS after verification: {e.code}')
+        raise
+    except Exception as e:  # an unexpected error in a gate is a refusal, never a pass
+        _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='blocked', detail=f'internal: {type(e).__name__}')
+        raise OrderRejected(503, 'safety_check_failed', 'An order-safety check failed unexpectedly; nothing was sent', {'error': type(e).__name__})
+
+    _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='submitting', attempts=int(row['attempts']) + 1,
+                   ref_price=float(evidence['reference_price']))
+    m = intent.material()
+    order_req = SubmitOrder(symbol=m['symbol'], quantity=intent.quantity, side=m['side'], order_type=intent.order_type,
+                            time_in_force=intent.time_in_force, limit_price=intent.limit_price, stop_price=intent.stop_price,
+                            client_order_id=cid)
+    try:
+        order = adapter.submit_order(order_req)
+    except BrokerRejected as e:
+        _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='rejected', detail=str(e)[:500])
+        _audit(intent, 'order_rejected_by_broker', {'client_order_id': cid, 'reason': str(e)[:300]}, actor)
+        _aegis_report(authorizer, auth, intent, 'failed', None, 'rejected by broker: ' + str(e)[:200])
+        raise OrderRejected(422, 'broker_rejected', str(e)[:300])
+    except Exception as e:  # BrokerOutcomeUnknown, BrokerUnavailable and anything unexpected
+        _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='unknown', detail=f'{type(e).__name__}: {e}'[:500])
+        _audit(intent, 'order_outcome_unknown', {'client_order_id': cid, 'error': type(e).__name__}, actor)
+        raise OrderRejected(504, 'outcome_unknown',
+                            'The broker did not confirm the order. Retry with the same idempotency key to reconcile; it will not be sent twice.',
+                            {'client_order_id': cid})
+    extra = {'authorization': auth.evidence()} if auth else {}
+    res = _record_submitted(intent, cid, owner, order, evidence, extra)
+    if auth:
+        res['authorization']['outcome_reported'] = _aegis_report(authorizer, auth, intent, 'succeeded', order)
+    _audit(intent, 'broker_order_submitted', {'local_order_id': res['local_order_id'], 'client_order_id': cid,
+                                              'broker_order_id': order.broker_order_id, **m}, actor)
+    return res
+
+
 def submit_order(intent: OrderIntent, *, adapter, connection: dict, quote_fn: Callable | None = None,
-                 governor: RiskGovernor | None = None, authorize: Callable | None = None, actor: dict | None = None) -> dict:
+                 governor: RiskGovernor | None = None, authorizer=None, actor: dict | None = None) -> dict:
     """The only function in Quant OS that sends an order to a broker. See the module docstring."""
     _validate(intent, connection, adapter)
     h = request_hash(intent)
@@ -437,54 +631,8 @@ def submit_order(intent: OrderIntent, *, adapter, connection: dict, quote_fn: Ca
     if owner is None:
         raise OrderRejected(409, 'order_in_progress', 'This order is already being processed; retry with the same key shortly')
     try:
-        row = _get_intent(intent.workspace_id, intent.idempotency_key) or row
-        if row['status'] == 'submitted':
-            return {**json.loads(row['response_json']), 'idempotent_replay': True}
-        if row['status'] in UNRESOLVED:
-            # An earlier attempt may have reached the broker. Find out before sending anything.
-            try:
-                found = adapter.get_order_by_client_order_id(cid)
-            except Exception as e:
-                _audit(intent, 'order_reconcile_failed', {'client_order_id': cid, 'error': type(e).__name__}, actor)
-                raise OrderRejected(503, 'reconciliation_pending',
-                                    'The outcome of an earlier attempt is unknown and the broker cannot confirm it yet; nothing was sent')
-            if found is not None:
-                res = _record_submitted(intent, cid, owner, found, None, {'reconciled': True})
-                _audit(intent, 'order_reconciled', {'client_order_id': cid, 'broker_order_id': found.broker_order_id, 'found': True}, actor)
-                return res
-            _audit(intent, 'order_reconciled', {'client_order_id': cid, 'found': False}, actor)
-
-        try:
-            evidence = evaluate(intent, adapter, quote_fn=quote_fn, governor=governor)
-            grant = authorize(intent, cid, evidence) if authorize else None
-            require_clear(intent.workspace_id)  # recheck immediately before sending
-        except OrderRejected as e:
-            _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='blocked', detail=f'{e.code}: {e.message}'[:500])
-            _audit(intent, 'order_blocked', {'client_order_id': cid, 'code': e.code, 'reason': e.message, **intent.material()}, actor)
-            raise
-
-        _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='submitting', attempts=int(row['attempts']) + 1)
-        m = intent.material()
-        order_req = SubmitOrder(symbol=m['symbol'], quantity=intent.quantity, side=m['side'], order_type=intent.order_type,
-                                time_in_force=intent.time_in_force, limit_price=intent.limit_price, stop_price=intent.stop_price,
-                                client_order_id=cid)
-        try:
-            order = adapter.submit_order(order_req)
-        except BrokerRejected as e:
-            _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='rejected', detail=str(e)[:500])
-            _audit(intent, 'order_rejected_by_broker', {'client_order_id': cid, 'reason': str(e)[:300]}, actor)
-            raise OrderRejected(422, 'broker_rejected', str(e)[:300])
-        except Exception as e:  # BrokerOutcomeUnknown, BrokerUnavailable and anything unexpected
-            _update_intent(intent.workspace_id, intent.idempotency_key, owner, status='unknown', detail=f'{type(e).__name__}: {e}'[:500])
-            _audit(intent, 'order_outcome_unknown', {'client_order_id': cid, 'error': type(e).__name__}, actor)
-            raise OrderRejected(504, 'outcome_unknown',
-                                'The broker did not confirm the order. Retry with the same idempotency key to reconcile; it will not be sent twice.',
-                                {'client_order_id': cid})
-        extra = {'authorization': grant} if grant else {}
-        res = _record_submitted(intent, cid, owner, order, evidence, extra)
-        _audit(intent, 'broker_order_submitted', {'local_order_id': res['local_order_id'], 'client_order_id': cid,
-                                                  'broker_order_id': order.broker_order_id, **m}, actor)
-        return res
+        with account_lock(intent.workspace_id, intent.connection_id):
+            return _submit_leased(intent, cid, owner, row, adapter, connection, quote_fn, governor, authorizer, actor)
     finally:
         _update_lease_release(intent.workspace_id, intent.idempotency_key, owner)
 
@@ -509,6 +657,11 @@ def reconcile_pending(workspace_id: str, connection_id: str, adapter) -> list[di
             else:
                 _update_intent(workspace_id, row['idem_key'], owner, status='blocked', detail='reconciled: not at broker')
                 tenant_store.event(workspace_id, 'order_reconciled', {'client_order_id': row['client_order_id'], 'found': False})
+            auth = _stored_auth(row)
+            if auth:
+                stub = OrderIntent(workspace_id, connection_id, '', '', 0, row['idem_key'], row['source'])
+                _aegis_report(_authorizer_or_none(), auth, stub, 'succeeded' if found is not None else 'failed', found,
+                              'reconciled after an unknown outcome' if found is not None else 'not at broker after an unknown outcome')
         except Exception:
             still.append(row)
         finally:

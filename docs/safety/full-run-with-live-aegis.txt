@@ -1,0 +1,94 @@
+test_broker_rejection_is_reported_as_failed (test_aegis_authorization.BrokerAmbiguity.test_broker_rejection_is_reported_as_failed) ... /tmp/claude-0/qos-venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+ok
+test_broker_timeout_after_submission_is_reconciled_once (test_aegis_authorization.BrokerAmbiguity.test_broker_timeout_after_submission_is_reconciled_once) ... ok
+test_broker_timeout_before_placement_closes_the_aegis_request (test_aegis_authorization.BrokerAmbiguity.test_broker_timeout_before_placement_closes_the_aegis_request) ... ok
+test_denied (test_aegis_authorization.Decisions.test_denied) ... ok
+test_held_for_approval_then_approved (test_aegis_authorization.Decisions.test_held_for_approval_then_approved) ... ok
+test_restricted_parameters_are_not_sent (test_aegis_authorization.Decisions.test_restricted_parameters_are_not_sent) ... ok
+test_aegis_never_receives_broker_credentials (test_aegis_authorization.Flow.test_aegis_never_receives_broker_credentials) ... ok
+test_authorized_order_follows_the_nine_steps (test_aegis_authorization.Flow.test_authorized_order_follows_the_nine_steps) ... ok
+test_automation_is_authorized_too (test_aegis_authorization.Flow.test_automation_is_authorized_too) ... ok
+test_gateway_malformed_response (test_aegis_authorization.GatewayFailure.test_gateway_malformed_response) ... ok
+test_gateway_server_error (test_aegis_authorization.GatewayFailure.test_gateway_server_error) ... ok
+test_gateway_timeout (test_aegis_authorization.GatewayFailure.test_gateway_timeout) ... ok
+test_gateway_unavailable (test_aegis_authorization.GatewayFailure.test_gateway_unavailable) ... ok
+test_misconfigured_keys_fail_closed (test_aegis_authorization.GatewayFailure.test_misconfigured_keys_fail_closed) ... ok
+test_plain_http_to_a_remote_host_is_refused (test_aegis_authorization.GatewayFailure.test_plain_http_to_a_remote_host_is_refused) ... ok
+test_unavailable_during_verification (test_aegis_authorization.GatewayFailure.test_unavailable_during_verification)
+AEGIS answered the decision, then failed before verification: nothing is sent. ... ok
+test_changed_parameters_invalidate_the_grant (test_aegis_authorization.Grants.test_changed_parameters_invalidate_the_grant)
+Any material change after authorization (here the quantity) fails verification. ... ok
+test_changed_parameters_under_the_same_key_are_refused (test_aegis_authorization.Grants.test_changed_parameters_under_the_same_key_are_refused) ... ok
+test_expired_grant (test_aegis_authorization.Grants.test_expired_grant) ... ok
+test_replayed_grant_is_refused (test_aegis_authorization.Grants.test_replayed_grant_is_refused) ... ok
+test_unsupported_order_type (test_aegis_authorization.Grants.test_unsupported_order_type) ... ok
+test_voided_grant_after_aegis_pause (test_aegis_authorization.Grants.test_voided_grant_after_aegis_pause) ... ok
+test_account_unavailable_blocks_even_if_aegis_allows (test_aegis_authorization.IndependentControls.test_account_unavailable_blocks_even_if_aegis_allows) ... ok
+test_kill_switch_blocks_before_aegis_is_asked (test_aegis_authorization.IndependentControls.test_kill_switch_blocks_before_aegis_is_asked) ... ok
+test_kill_switch_engaged_after_authorization_blocks_and_leaves_grant_unused (test_aegis_authorization.IndependentControls.test_kill_switch_engaged_after_authorization_blocks_and_leaves_grant_unused) ... ok
+test_risk_governor_blocks_even_if_aegis_allows (test_aegis_authorization.IndependentControls.test_risk_governor_blocks_even_if_aegis_allows) ... ok
+test_allowed_order_end_to_end (test_aegis_live.RealAegis.test_allowed_order_end_to_end) ... ok
+test_approval_band_then_human_approval (test_aegis_live.RealAegis.test_approval_band_then_human_approval) ... ok
+test_changed_parameters_are_refused_by_aegis (test_aegis_live.RealAegis.test_changed_parameters_are_refused_by_aegis) ... ok
+test_evidence_chain_verifies (test_aegis_live.RealAegis.test_evidence_chain_verifies) ... ok
+test_policy_denial (test_aegis_live.RealAegis.test_policy_denial) ... ok
+test_replayed_grant_is_refused_by_aegis (test_aegis_live.RealAegis.test_replayed_grant_is_refused_by_aegis) ... ok
+test_tampered_trading_record_is_detected (test_aegis_live.RealAegis.test_tampered_trading_record_is_detected)
+Someone with database owner rights rewrites the evidence of a Quant OS order (here, the ... ok
+test_concurrent_automation_cycles_place_one_order (test_failure_matrix.Concurrency.test_concurrent_automation_cycles_place_one_order) ... ok
+test_concurrent_requests_with_different_keys_respect_exposure_limit (test_failure_matrix.Concurrency.test_concurrent_requests_with_different_keys_respect_exposure_limit)
+Ten concurrent 3% orders in one symbol: the 12% symbol limit must hold at the broker. ... ok
+test_concurrent_requests_with_one_key_place_one_order (test_failure_matrix.Concurrency.test_concurrent_requests_with_one_key_place_one_order) ... ok
+test_automation_after_restart_reconciles_pending_orders_first (test_failure_matrix.DatabaseRestart.test_automation_after_restart_reconciles_pending_orders_first) ... ok
+test_crash_between_send_and_record_is_reconciled_after_restart (test_failure_matrix.DatabaseRestart.test_crash_between_send_and_record_is_reconciled_after_restart)
+The process dies after the broker accepted the order but before Quant OS recorded it. ... ok
+test_restart_after_an_unknown_outcome_reconciles_instead_of_resubmitting (test_failure_matrix.DatabaseRestart.test_restart_after_an_unknown_outcome_reconciles_instead_of_resubmitting) ... ok
+test_database_unavailable_refuses_the_order (test_failure_matrix.DatabaseUnavailable.test_database_unavailable_refuses_the_order) ... ok
+test_kill_switch_state_unreadable_fails_closed (test_failure_matrix.DatabaseUnavailable.test_kill_switch_state_unreadable_fails_closed) ... ok
+test_automation_repeats_on_the_same_signal_bar_place_one_order (test_failure_matrix.Duplicates.test_automation_repeats_on_the_same_signal_bar_place_one_order) ... ok
+test_same_key_different_order_is_refused (test_failure_matrix.Duplicates.test_same_key_different_order_is_refused) ... ok
+test_same_request_twice_places_one_order (test_failure_matrix.Duplicates.test_same_request_twice_places_one_order) ... ok
+test_automation_survives_governor_exception_without_trading (test_failure_matrix.GovernorFailure.test_automation_survives_governor_exception_without_trading) ... ok
+test_risk_governor_exception_refuses_the_order (test_failure_matrix.GovernorFailure.test_risk_governor_exception_refuses_the_order) ... ok
+test_broker_positions_down_with_aegis_up (test_failure_matrix.PartialFailure.test_broker_positions_down_with_aegis_up) ... ok
+test_concurrent_requests_get_one_grant (test_failure_matrix.PartialFailure.test_concurrent_requests_get_one_grant) ... ok
+test_outcome_report_failure_does_not_hide_a_placed_order (test_failure_matrix.PartialFailure.test_outcome_report_failure_does_not_hide_a_placed_order) ... ok
+test_automation_retry_after_broker_timeout_does_not_duplicate (test_safety_regressions.Idempotency.test_automation_retry_after_broker_timeout_does_not_duplicate)
+Defect Q5 (automation): a random client_order_id per attempt meant a retry after a lost ... ok
+test_manual_retry_after_broker_timeout_does_not_duplicate (test_safety_regressions.Idempotency.test_manual_retry_after_broker_timeout_does_not_duplicate)
+Defect Q5 (manual): the idempotency record was written only after success, so a retry after a ... ok
+test_retry_reconciles_before_resubmitting (test_safety_regressions.Idempotency.test_retry_reconciles_before_resubmitting)
+An uncertain outcome is looked up at the broker before any retry is sent. ... ok
+test_automation_blocked_by_kill_switch (test_safety_regressions.KillSwitch.test_automation_blocked_by_kill_switch)
+Defect Q2: automation called the governor with kill_switch=False and never checked the switch. ... ok
+test_kill_switch_authorization (test_safety_regressions.KillSwitch.test_kill_switch_authorization)
+Defect Q4 (authorization). The platform switch halts every workspace, so a workspace key may not ... ok
+test_kill_switch_changes_require_authentication (test_safety_regressions.KillSwitch.test_kill_switch_changes_require_authentication)
+Defect Q4: anyone who could reach the API could turn the kill switch off. ... ok
+test_kill_switch_persists_across_restart (test_safety_regressions.KillSwitch.test_kill_switch_persists_across_restart)
+Defect Q3: the kill switch lived only in process memory and reset to off on restart. ... ok
+test_manual_broker_order_blocked_by_platform_kill_switch (test_safety_regressions.KillSwitch.test_manual_broker_order_blocked_by_platform_kill_switch)
+Defect Q1: the broker order route never checked the kill switch. ... ok
+test_manual_broker_order_blocked_by_workspace_kill_switch (test_safety_regressions.KillSwitch.test_manual_broker_order_blocked_by_workspace_kill_switch)
+Defect Q1 and Q3: there was no per-workspace kill switch for broker orders. ... ok
+test_simulator_honours_persisted_kill_switch (test_safety_regressions.KillSwitch.test_simulator_honours_persisted_kill_switch)
+Defect Q3 (simulator path): after a restart the simulated engine traded again. ... ok
+test_automation_rejected_when_account_unavailable (test_safety_regressions.RiskGovernor.test_automation_rejected_when_account_unavailable)
+Preserved behaviour: automation already stopped when the broker account could not be read. ... ok
+test_automation_uses_live_drawdown (test_safety_regressions.RiskGovernor.test_automation_uses_live_drawdown)
+Defect Q2: automation passed drawdown=0.0 regardless of the account's real drawdown. ... ok
+test_manual_market_order_rejected_on_stale_price (test_safety_regressions.RiskGovernor.test_manual_market_order_rejected_on_stale_price)
+A market order must not be sized or checked against a stale or synthetic price. ... ok
+test_manual_order_enforces_risk_governor (test_safety_regressions.RiskGovernor.test_manual_order_enforces_risk_governor)
+Defect Q1: manual broker orders skipped the risk governor (here, symbol exposure above 12% of equity). ... ok
+test_manual_order_rejected_when_account_unavailable (test_safety_regressions.RiskGovernor.test_manual_order_rejected_when_account_unavailable)
+Required risk information unavailable: the order must be rejected, not sent. ... ok
+test_manual_order_rejected_when_positions_unavailable (test_safety_regressions.RiskGovernor.test_manual_order_rejected_when_positions_unavailable) ... ok
+test_manual_and_automated_orders_use_the_same_safety_checks (test_safety_regressions.SinglePath.test_manual_and_automated_orders_use_the_same_safety_checks)
+All execution paths go through one order-safety function. ... ok
+
+----------------------------------------------------------------------
+Ran 66 tests in 28.013s
+
+OK

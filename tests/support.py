@@ -64,7 +64,9 @@ os.environ["QOS_SECRET_FAKE_API_KEY"] = "fake-key"
 os.environ["QOS_SECRET_FAKE_API_SECRET"] = "fake-secret"
 
 QUOTES: dict[str, dict] = {}  # symbol -> {"price": float, "stale": bool, "age": float}
-BARS = {"offset": 0}  # whole 5-minute bars added to the clock, so a test can move to the next signal bar
+# Bar timestamps come from a frozen clock, so a test never crosses a 5-minute bar boundary by accident;
+# advance_bar() moves to the next signal bar on purpose.
+BARS = {"base": int(time.time()) // 300 * 300, "offset": 0}
 
 
 def advance_bar(n: int = 1) -> None:
@@ -105,15 +107,15 @@ def load(data_dir: str) -> SimpleNamespace:
 
     def fake_history(self, symbol, period="3mo", interval="1d"):
         price = QUOTES.get(symbol.upper(), {"price": 100.0})["price"]
-        last = (int(time.time()) // 300 + BARS["offset"]) * 300  # bar timestamps are stable within a bar, like real data
+        last = BARS["base"] + BARS["offset"] * 300
         return [{"ts": last - (59 - i) * 300, "open": price, "high": price, "low": price, "close": price, "volume": 1000} for i in range(60)]
 
     market_data.MarketDataHub.quote = fake_quote
     market_data.MarketDataHub.history = fake_history
 
     registry = importlib.import_module("quantos.registry")
+    # The fake broker is outside Quant OS: its state (orders, positions) survives a Quant OS restart.
     fakes = importlib.import_module("fakes")
-    importlib.reload(fakes)
     fake_cls = fakes.make_fake_broker(importlib.import_module("quantos.base"))
     registry.register(fake_cls)
 
@@ -121,6 +123,8 @@ def load(data_dir: str) -> SimpleNamespace:
     tracking = importlib.import_module("quantos.tracking")
     saas_engine = importlib.import_module("quantos.saas_engine")
     api_saas = importlib.import_module("quantos.api_saas")
+    if (ROOT / "aegis_client.py").exists():
+        importlib.import_module("quantos.aegis_client")
 
     # What the FastAPI startup hook does, without starting the background trading loops.
     store.init_db()
