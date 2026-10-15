@@ -1,17 +1,21 @@
-# Fly.io deployment for the Quant OS dashboard (static site). The API is the separate app quantos-api.
-app = "quantos-web"
-primary_region = "ams"
+# fly.toml app configuration file generated for quantos-web on 2026-10-15T00:05:50Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'quantos-web'
+primary_region = 'ams'
 
 [build]
-  dockerfile = "Dockerfile.web"
+  dockerfile = 'Dockerfile.web'
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
