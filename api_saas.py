@@ -6,14 +6,13 @@ import hmac
 import json
 import os
 import time
-import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import tenant_store, tracking
+from . import order_safety, tenant_store, tracking
 from .brokers import available, create, SubmitOrder
-from .secrets import secret_store
+from .secret_store import secret_store
 
 router=APIRouter(prefix='/api/v1',tags=['SaaS / Broker Platform'])
 
@@ -40,6 +39,11 @@ class ConnectionCreate(BaseModel):
 class ExecutionToggle(BaseModel):
     enabled:bool
     confirmation:str=''
+
+
+class KillSwitchChange(BaseModel):
+    enabled:bool
+    reason:str=Field(default='',max_length=300)
 
 
 class AutomationConfig(BaseModel):
@@ -206,35 +210,44 @@ def positions(ws=Depends(current_workspace)): return tenant_store.list_positions
 def orders(limit:int=100,ws=Depends(current_workspace)): return tenant_store.list_orders(ws['id'],min(max(limit,1),1000))
 
 
+def actor(ws:dict)->dict:
+    return {'actor_key_prefix':ws.get('api_key_prefix'),'actor_role':ws.get('api_key_role')}
+
+
 @router.post('/orders')
 def submit(body:RoutedOrder,request:Request,x_qos_idempotency_key:str=Header(default='',alias='X-QOS-Idempotency-Key'),ws=Depends(require_role('admin','trader'))):
     if not x_qos_idempotency_key or len(x_qos_idempotency_key)>120:
         raise HTTPException(400,'X-QOS-Idempotency-Key is required for order submission')
-    request_hash=hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+    # Keys recorded before order_safety existed are still honoured.
     prior=tenant_store.get_idempotent(ws['id'],x_qos_idempotency_key)
     if prior:
-        if prior['request_hash']!=request_hash: raise HTTPException(409,'Idempotency key was already used with a different order')
+        if prior['request_hash']!=hashlib.sha256(body.model_dump_json().encode()).hexdigest(): raise HTTPException(409,'Idempotency key was already used with a different order')
         return prior['response'] | {'idempotent_replay':True}
-
     conn,adapter=adapter_for(ws,body.connection_id)
-    if not conn['execution_enabled']: raise HTTPException(409,'Execution is disabled for this broker connection')
-    if not adapter.paper_only: raise HTTPException(409,'Real-money execution is disabled in this build')
-    side=body.side.lower()
-    if side not in ('buy','sell'): raise HTTPException(400,'side must be buy or sell')
-    if body.order_type in {'limit','stop_limit'} and not body.limit_price: raise HTTPException(400,'limit_price is required')
-    if body.order_type in {'stop','stop_limit'} and not body.stop_price: raise HTTPException(400,'stop_price is required')
-
-    client_order_id='qos-'+uuid.uuid4().hex[:24]
+    intent=order_safety.OrderIntent(
+        workspace_id=ws['id'],connection_id=conn['id'],symbol=body.symbol.upper(),side=body.side.lower(),quantity=body.quantity,
+        idempotency_key='manual:'+x_qos_idempotency_key,source='manual',order_type=body.order_type,time_in_force=body.time_in_force,
+        limit_price=body.limit_price,stop_price=body.stop_price,strategy_id=body.strategy_id,
+    )
     try:
-        order=adapter.submit_order(SubmitOrder(symbol=body.symbol.upper(),quantity=body.quantity,side=side,order_type=body.order_type,time_in_force=body.time_in_force,limit_price=body.limit_price,stop_price=body.stop_price,client_order_id=client_order_id))
-        data=asdict(order)
-        oid=tenant_store.save_order(ws['id'],conn['id'],data,body.strategy_id)
-        response={'local_order_id':oid,'order':data,'paper':True,'request_id':getattr(request.state,'request_id',None)}
-        tenant_store.save_idempotent(ws['id'],x_qos_idempotency_key,request_hash,response,200)
-        audit(ws,'broker_order_submitted',{'local_order_id':oid,'broker_order_id':order.broker_order_id,'connection_id':conn['id'],'symbol':order.symbol,'side':order.side,'quantity':order.quantity})
-        return response
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(502,str(e))
+        res=order_safety.submit_order(intent,adapter=adapter,connection=conn,actor=actor(ws))
+    except order_safety.OrderRejected as e:
+        raise HTTPException(e.status,e.as_dict())
+    return res | {'request_id':getattr(request.state,'request_id',None)}
+
+
+@router.get('/kill-switch')
+def workspace_kill_switch(ws=Depends(current_workspace)):
+    return order_safety.kill_switch_status(ws['id'])
+
+
+@router.post('/kill-switch')
+def workspace_kill_switch_set(body:KillSwitchChange,ws=Depends(require_role('admin','trader'))):
+    # Engaging is safety-positive, so traders may do it. Releasing needs the workspace admin role.
+    if not body.enabled and ws.get('api_key_role','admin')!='admin':
+        raise HTTPException(403,'Only a workspace admin key can release the kill switch')
+    order_safety.set_kill_switch(ws['id'],body.enabled,'key:'+str(ws.get('api_key_prefix')),body.reason)
+    return order_safety.kill_switch_status(ws['id'])
 
 
 @router.get('/tracking/scoreboard')

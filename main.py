@@ -1,8 +1,8 @@
 from __future__ import annotations
-import asyncio, random, time
+import asyncio, hmac, os, random, time
 from dataclasses import dataclass, asdict
 from typing import Literal
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from .production import production_guard, cors_origins, readiness_payload
 from pydantic import BaseModel, Field
@@ -16,12 +16,12 @@ from .scout import scan as scout_scan, DAY_UNIVERSE
 from .quant_research import validation_report
 from . import tracking
 from .api_saas import router as saas_router
-from . import tenant_store
+from . import order_safety, tenant_store
 from .saas_engine import cycle_all as saas_cycle_all
 
 app=FastAPI(title='Quant OS Broker Platform',version='0.7.0')
 app.middleware('http')(production_guard)
-app.add_middleware(CORSMiddleware,allow_origins=cors_origins(),allow_credentials=False,allow_methods=['GET','POST','PUT','DELETE','OPTIONS'],allow_headers=['Content-Type','X-QOS-API-Key','X-QOS-Bootstrap-Token','X-QOS-Idempotency-Key','X-Request-ID'])
+app.add_middleware(CORSMiddleware,allow_origins=cors_origins(),allow_credentials=False,allow_methods=['GET','POST','PUT','DELETE','OPTIONS'],allow_headers=['Content-Type','X-QOS-API-Key','X-QOS-Admin-Token','X-QOS-Bootstrap-Token','X-QOS-Idempotency-Key','X-Request-ID'])
 app.include_router(saas_router)
 
 @dataclass
@@ -45,18 +45,26 @@ AGENTS=[
  {'id':'RISK-00','role':'risk_governor','confidence':.99,'verdict':'WITHIN_LIMITS'},
 ]
 hub=MarketDataHub(); governor=RiskGovernor()
-state={'startingEquity':100000.0,'cash':100000.0,'equity':100000.0,'dayPnl':0.0,'drawdown':0.0,'peakEquity':100000.0,'grossExposure':0.0,'regime':'TREND','latencyMs':18.4,'riskState':'SAFE','killSwitch':False,'lastUpdate':0.0,'engineRunning':True,'lastCycle':None}
+state={'startingEquity':100000.0,'cash':100000.0,'equity':100000.0,'dayPnl':0.0,'drawdown':0.0,'peakEquity':100000.0,'grossExposure':0.0,'regime':'TREND','latencyMs':18.4,'riskState':'SAFE','lastUpdate':0.0,'engineRunning':True,'lastCycle':None}
 watchlist=['NVDA','AAPL','MSFT','ES','BTC','GC','CL']
 last_signals=[]
 last_intelligence=[]
 
-class KillSwitchBody(BaseModel): enabled:bool
+class KillSwitchBody(BaseModel): enabled:bool; reason:str=Field(default='',max_length=300)
 class EngineBody(BaseModel): enabled:bool
 class PaperOrder(BaseModel):
  symbol:str=Field(min_length=1,max_length=16); side:Literal['BUY','SELL','SHORT','COVER']; quantity:float=Field(gt=0,le=100000); strategy_id:str; confidence:float=Field(ge=0,le=1); requested_risk_pct:float=Field(gt=0,le=5)
 class BacktestBody(BaseModel): strategy_id:str; symbol:str; period:str='1y'; interval:str='1d'; fee_bps:float=Field(default=2,ge=0,le=100)
 
 def strat(sid): return next((s for s in STRATEGIES if s.id==sid),None)
+
+def require_operator(token:str):
+    """Platform operator check for state-changing control endpoints (X-QOS-Admin-Token)."""
+    expected=os.getenv('QOS_ADMIN_TOKEN','').strip()
+    if not token: raise HTTPException(401,'Operator authentication required (X-QOS-Admin-Token)')
+    if not expected: raise HTTPException(503,'Operator controls are disabled until QOS_ADMIN_TOKEN is configured')
+    if len(expected)<16 or not hmac.compare_digest(token.encode(),expected.encode()): raise HTTPException(401,'Invalid operator token')
+    return 'operator'
 def mark_positions():
     positions=store.get_positions(); unreal=0.0; gross=0.0; market_value=0.0; rendered=[]
     for p in positions:
@@ -71,14 +79,14 @@ def mark_positions():
 
 def snapshot():
     positions=mark_positions(); active=sum(1 for s in STRATEGIES if s.active)
-    return {'equity':round(state['equity'],2),'dayPnl':round(state['dayPnl'],2),'drawdown':round(state['drawdown'],3),'grossExposure':round(state['grossExposure'],2),'regime':state['regime'],'latencyMs':round(state['latencyMs'],1),'activeStrategies':active,'riskState':'HALTED' if state['killSwitch'] else state['riskState'],'engineRunning':state['engineRunning'],'lastCycle':state['lastCycle'],'positionCount':len(positions),'mode':'PAPER/SHADOW','liveExecution':False}
+    return {'equity':round(state['equity'],2),'dayPnl':round(state['dayPnl'],2),'drawdown':round(state['drawdown'],3),'grossExposure':round(state['grossExposure'],2),'regime':state['regime'],'latencyMs':round(state['latencyMs'],1),'activeStrategies':active,'riskState':'HALTED' if order_safety.platform_halted() else state['riskState'],'engineRunning':state['engineRunning'],'lastCycle':state['lastCycle'],'positionCount':len(positions),'mode':'PAPER/SHADOW','liveExecution':False}
 
-def evaluate_order(o:PaperOrder,quote_age=0.0,intelligence:dict|None=None,strategy_health:float=100.0,strategy_health_state:str='NORMAL'):
+def evaluate_order(o:PaperOrder,quote_age=0.0,intelligence:dict|None=None,strategy_health:float=100.0,strategy_health_state:str='NORMAL',quote_stale:bool=False):
     s=strat(o.strategy_id); intelligence=intelligence or {}
-    return governor.evaluate(kill_switch=state['killSwitch'],strategy_active=bool(s and s.active),confidence=o.confidence,requested_risk_pct=o.requested_risk_pct,gross_exposure=state['grossExposure'],drawdown=state['drawdown'],market_data_fresh=quote_age<30,quantity=o.quantity,regime_fit=float(intelligence.get('regime_fit',1.0)),net_edge_bps=float(intelligence.get('net_edge_bps',999.0)),correlation_penalty=float(intelligence.get('correlation_penalty',0.0)),strategy_health=strategy_health,health_state=strategy_health_state)
+    return governor.evaluate(kill_switch=order_safety.platform_halted(),strategy_active=bool(s and s.active),confidence=o.confidence,requested_risk_pct=o.requested_risk_pct,gross_exposure=state['grossExposure'],drawdown=state['drawdown'],market_data_fresh=quote_age<order_safety.max_quote_age() and not quote_stale,quantity=o.quantity,regime_fit=float(intelligence.get('regime_fit',1.0)),net_edge_bps=float(intelligence.get('net_edge_bps',999.0)),correlation_penalty=float(intelligence.get('correlation_penalty',0.0)),strategy_health=strategy_health,health_state=strategy_health_state)
 
 def execute_order(o:PaperOrder, automated=False, intelligence:dict|None=None, strategy_health:float=100.0, strategy_health_state:str='NORMAL', decision_id:str|None=None):
-    started=time.perf_counter(); q=hub.quote(o.symbol); age=max(0,time.time()-q.ts); decision=evaluate_order(o,age,intelligence,strategy_health,strategy_health_state)
+    started=time.perf_counter(); q=hub.quote(o.symbol); age=max(0,time.time()-q.ts); decision=evaluate_order(o,age,intelligence,strategy_health,strategy_health_state,q.stale)
     if not decision['approved']:
         store.add_order(ts=time.time(),symbol=o.symbol.upper(),side=o.side,qty=o.quantity,fill_price=None,strategy_id=o.strategy_id,status='BLOCKED',confidence=o.confidence,risk_pct=o.requested_risk_pct,reason=decision['reason'],shadow_price=None,slippage_bps=0)
         store.event('order_blocked',{'symbol':o.symbol.upper(),'strategy':o.strategy_id,'reason':decision['reason'],'automated':automated}); return None,decision
@@ -162,7 +170,7 @@ async def engine_loop():
     await asyncio.sleep(1)
     while True:
         try:
-            if state['engineRunning'] and not state['killSwitch']:
+            if state['engineRunning'] and not order_safety.platform_halted():
                 await asyncio.to_thread(run_engine_cycle)
             await asyncio.sleep(15)
         except Exception as e:
@@ -171,7 +179,7 @@ async def engine_loop():
 
 @app.on_event('startup')
 async def startup():
-    store.init_db(); tenant_store.init_db(); tracking.init_tracking(); tenant_store.ensure_automation_schema(); tenant_store.migrate_production_schema()
+    store.init_db(); tenant_store.init_db(); tracking.init_tracking(); tenant_store.ensure_automation_schema(); tenant_store.migrate_production_schema(); order_safety.init_schema()
     persisted=store.load_portfolio_state()
     if persisted:
         state['cash']=float(persisted.get('cash',state['cash'])); state['startingEquity']=float(persisted.get('startingEquity',state['startingEquity'])); state['peakEquity']=float(persisted.get('peakEquity',state['peakEquity']))
@@ -189,7 +197,8 @@ def get_snapshot(): return snapshot()
 @app.get('/api/strategies')
 def get_strategies(): return [asdict(s) for s in STRATEGIES]
 @app.post('/api/strategies/{sid}/toggle')
-def toggle_strategy(sid:str):
+def toggle_strategy(sid:str,x_qos_admin_token:str=Header(default='',alias='X-QOS-Admin-Token')):
+    require_operator(x_qos_admin_token)
     s=strat(sid)
     if not s: raise HTTPException(404,'Strategy not found')
     s.active=not s.active; store.event('strategy_toggle',{'strategy':sid,'active':s.active}); return asdict(s)
@@ -215,10 +224,26 @@ def quotes(symbols:str='NVDA,AAPL,MSFT,ES,BTC,GC,CL'):
     return out
 @app.get('/api/market/history/{symbol}')
 def history(symbol:str,period:str='3mo',interval:str='1d'): return hub.history(symbol,period,interval)
+def _platform_switch():
+    ks=order_safety.kill_switch_status(None); p=ks['platform'] or {}
+    return {'enabled':ks['engaged'],'riskState':'HALTED' if ks['engaged'] else 'SAFE','reason':p.get('reason',''),'updated_at':p.get('updated_at'),'reasons':ks['reasons']}
+@app.get('/api/risk/kill-switch')
+def kill_state(): return _platform_switch()
 @app.post('/api/risk/kill-switch')
-def kill(body:KillSwitchBody): state['killSwitch']=body.enabled; store.event('kill_switch',{'enabled':body.enabled}); return {'enabled':body.enabled,'riskState':'HALTED' if body.enabled else 'SAFE'}
+def kill(body:KillSwitchBody,x_qos_admin_token:str=Header(default='',alias='X-QOS-Admin-Token'),x_qos_api_key:str=Header(default='',alias='X-QOS-API-Key')):
+    # The platform switch halts every workspace, so only the platform operator may change it.
+    # Workspace keys use /api/v1/kill-switch, which halts only their own workspace.
+    if not x_qos_admin_token and x_qos_api_key:
+        if tenant_store.authenticate(x_qos_api_key): raise HTTPException(403,'Workspace keys cannot change the platform kill switch; use /api/v1/kill-switch')
+        raise HTTPException(401,'Invalid workspace API key')
+    require_operator(x_qos_admin_token)
+    order_safety.set_kill_switch(None,body.enabled,'operator',body.reason)
+    store.event('kill_switch',{'enabled':body.enabled,'reason':body.reason[:300]})
+    return _platform_switch()
 @app.post('/api/engine')
-def engine(body:EngineBody): state['engineRunning']=body.enabled; store.event('engine_toggle',{'enabled':body.enabled}); return {'enabled':body.enabled}
+def engine(body:EngineBody,x_qos_admin_token:str=Header(default='',alias='X-QOS-Admin-Token')):
+    require_operator(x_qos_admin_token)
+    state['engineRunning']=body.enabled; store.event('engine_toggle',{'enabled':body.enabled}); return {'enabled':body.enabled}
 @app.post('/api/paper/orders/evaluate')
 def evaluate(o:PaperOrder): return evaluate_order(o)
 @app.post('/api/paper/orders/submit')

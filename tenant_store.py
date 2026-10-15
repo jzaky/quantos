@@ -3,7 +3,8 @@ import hashlib, json, secrets, sqlite3, threading, time, uuid
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).resolve().parent.parent / 'data' / 'quant_os_saas.db'
+import os as _os
+DB_PATH = Path(_os.getenv('QOS_DATA_DIR') or Path(__file__).resolve().parent.parent / 'data') / 'quant_os_saas.db'
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 _lock=threading.Lock()
 
@@ -161,6 +162,29 @@ def mark_automation_trade(workspace_id:str,strategy_id:str,symbol:str):
         c=connect(); c.execute('INSERT INTO automation_state(workspace_id,strategy_id,symbol,last_trade_at) VALUES(?,?,?,?) ON CONFLICT(workspace_id,strategy_id,symbol) DO UPDATE SET last_trade_at=excluded.last_trade_at',(workspace_id,strategy_id,symbol,now)); c.commit(); c.close()
 
 # --- Production hardening extensions ---
+SAFETY_SCHEMA = '''
+CREATE TABLE IF NOT EXISTS safety_state (
+  scope TEXT PRIMARY KEY, engaged INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '',
+  actor TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS order_intents (
+  workspace_id TEXT NOT NULL, idem_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+  client_order_id TEXT NOT NULL UNIQUE, source TEXT NOT NULL, connection_id TEXT NOT NULL,
+  params_json TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+  response_json TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+  lease_owner TEXT, lease_until REAL, aegis_json TEXT, ref_price REAL, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+  PRIMARY KEY(workspace_id, idem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_order_intents_status ON order_intents(workspace_id, connection_id, status);
+CREATE TABLE IF NOT EXISTS account_locks (
+  lock_key TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_marks (
+  workspace_id TEXT NOT NULL, connection_id TEXT NOT NULL, high_water REAL NOT NULL,
+  updated_at REAL NOT NULL, PRIMARY KEY(workspace_id, connection_id)
+);
+'''
+
 def migrate_production_schema():
     """Idempotent schema upgrades for SaaS control-plane hardening."""
     with _lock:
@@ -183,7 +207,15 @@ def migrate_production_schema():
         CREATE INDEX IF NOT EXISTS idx_broker_orders_ws_created ON broker_orders(workspace_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_broker_connections_ws ON broker_connections(workspace_id);
         ''')
+        # Migration 5: order safety (persisted kill switches, order intents, account high-water marks).
+        c.executescript(SAFETY_SCHEMA)
+        intent_cols={r['name'] for r in c.execute('PRAGMA table_info(order_intents)').fetchall()}
+        if 'aegis_json' not in intent_cols:
+            c.execute('ALTER TABLE order_intents ADD COLUMN aegis_json TEXT')
+        if 'ref_price' not in intent_cols:
+            c.execute('ALTER TABLE order_intents ADD COLUMN ref_price REAL')
         c.execute('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)',(4,time.time()))
+        c.execute('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)',(5,time.time()))
         c.commit(); c.close()
 
 

@@ -15,13 +15,14 @@ class Limits:
 
 class RiskGovernor:
     def __init__(self,limits:Limits|None=None): self.limits=limits or Limits()
-    def evaluate(self, *, kill_switch, strategy_active, confidence, requested_risk_pct, gross_exposure, drawdown, market_data_fresh, quantity, regime_fit=1.0, net_edge_bps=999.0, correlation_penalty=0.0, strategy_health=100.0, health_state='NORMAL'):
+    def evaluate(self, *, kill_switch, strategy_active, confidence, requested_risk_pct, gross_exposure, drawdown, market_data_fresh, quantity, regime_fit=1.0, net_edge_bps=999.0, correlation_penalty=0.0, strategy_health=100.0, health_state='NORMAL', symbol_exposure=0.0):
         checks={
           'kill_switch_clear':not kill_switch,'strategy_active':strategy_active,
           'confidence_floor':confidence>=self.limits.min_confidence,
           'risk_budget':requested_risk_pct<=self.limits.max_order_risk_pct,
           'gross_exposure':gross_exposure<self.limits.max_gross_exposure_pct,
           'drawdown_limit':drawdown<self.limits.max_drawdown_pct,
+          'symbol_exposure':symbol_exposure<=self.limits.max_symbol_exposure_pct,
           'market_data_fresh':market_data_fresh,
           'regime_fit':regime_fit>=self.limits.min_regime_fit,
           'edge_after_costs':net_edge_bps>=self.limits.min_net_edge_bps,

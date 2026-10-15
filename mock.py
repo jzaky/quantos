@@ -1,6 +1,6 @@
 from __future__ import annotations
 import time, uuid
-from .base import BrokerAdapter, BrokerAccount, BrokerOrder, BrokerPosition, SubmitOrder
+from .base import BrokerRejected, BrokerAdapter, BrokerAccount, BrokerOrder, BrokerPosition, SubmitOrder
 
 _STATE={}
 
@@ -14,11 +14,14 @@ class MockPaperAdapter(BrokerAdapter):
         mv=sum(q*float(self.config.get('price',100.0)) for q in self.state['positions'].values()); eq=self.state['cash']+mv
         return BrokerAccount(self.slug,'mock-account','ACTIVE','USD',eq,self.state['cash'],max(eq*2,0),True)
     def submit_order(self,o:SubmitOrder):
+        if o.client_order_id and any(x.client_order_id==o.client_order_id for x in self.state['orders'].values()):
+            raise BrokerRejected('client_order_id must be unique')
         oid=str(uuid.uuid4()); price=float(self.config.get('price',100.0)); signed=o.quantity if o.side=='buy' else -o.quantity
         self.state['positions'][o.symbol.upper()]=self.state['positions'].get(o.symbol.upper(),0)+signed; self.state['cash']-=signed*price
         r=BrokerOrder(self.slug,oid,o.client_order_id or '',o.symbol.upper(),o.side,o.quantity,o.order_type,'filled',o.quantity,price,str(time.time()),{}); self.state['orders'][oid]=r; return r
     def cancel_order(self,broker_order_id): return broker_order_id in self.state['orders']
     def get_order(self,broker_order_id): return self.state['orders'][broker_order_id]
+    def get_order_by_client_order_id(self,client_order_id): return next((o for o in self.state['orders'].values() if o.client_order_id==client_order_id),None)
     def list_positions(self):
         price=float(self.config.get('price',100.0)); return [BrokerPosition(self.slug,s,q,price,q*price,0.0,'long' if q>=0 else 'short') for s,q in self.state['positions'].items() if abs(q)>1e-9]
     def close_position(self,symbol):

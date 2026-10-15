@@ -53,6 +53,20 @@ class SubmitOrder:
     stop_price: float | None = None
     client_order_id: str | None = None
 
+class BrokerError(RuntimeError):
+    """Base class for classified broker failures."""
+
+class BrokerRejected(BrokerError):
+    """The broker answered and refused the request. Nothing was placed."""
+
+class BrokerOutcomeUnknown(BrokerError):
+    """The request may or may not have reached the broker (timeout, dropped connection, 5xx).
+    The order must be looked up by client_order_id before anything is retried."""
+
+class BrokerUnavailable(BrokerOutcomeUnknown):
+    """The broker could not be reached. Treated like an unknown outcome for orders, because a
+    transport error does not prove the request was never delivered."""
+
 class BrokerAdapter:
     slug = 'base'
     label = 'Base Broker'
@@ -72,6 +86,11 @@ class BrokerAdapter:
         raise NotImplementedError
 
     def get_order(self, broker_order_id: str) -> BrokerOrder:
+        raise NotImplementedError
+
+    def get_order_by_client_order_id(self, client_order_id: str) -> BrokerOrder | None:
+        """Return the order with this client_order_id, or None when the broker confirms it has none.
+        Raise when the broker cannot answer; callers must then treat the outcome as unknown."""
         raise NotImplementedError
 
     def list_positions(self) -> list[BrokerPosition]:
